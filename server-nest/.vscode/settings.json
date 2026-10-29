@@ -1,0 +1,6 @@
+{
+  "workbench.colorCustomizations": {
+    "activityBar.activeBorder": "#df00ad"
+  },
+  "prisma.pinToPrisma6": true
+}

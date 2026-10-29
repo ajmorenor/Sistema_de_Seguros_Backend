@@ -1,0 +1,85 @@
+import './prestart';
+import { NestFactory } from '@nestjs/core';
+import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
+import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import fastifyMultipart from '@fastify/multipart';
+import helmet from '@fastify/helmet';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+process.env.TZ = 'UTC';
+
+import { AppModule } from './app/app.module';
+import { EnvRepository } from './shared/env/domain/env.repository';
+import { HttpExceptionFilter } from './app/http/filters';
+import { MultipartBodyInterceptor } from './app/http/interceptors';
+
+async function bootstrap() {
+  const logger = new Logger('BootstrapApplication');
+
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
+
+  // global filters
+  app.useGlobalFilters(app.get<HttpExceptionFilter>(HttpExceptionFilter));
+
+  // global interceptors
+  app.useGlobalInterceptors(app.get<MultipartBodyInterceptor>(MultipartBodyInterceptor));
+
+  // global prefix & versioning
+  app.setGlobalPrefix('api');
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: '1',
+  });
+
+  // register multipart
+  await app.register(fastifyMultipart, {
+    attachFieldsToBody: false,
+    limits: {
+      fileSize: 1024 * 1024 * 1024, // 1 GB
+    },
+  });
+
+  // helmet
+  await app.register(helmet);
+
+  // get port from env
+  const _env = app.get<EnvRepository>(EnvRepository);
+  const port: number | string = _env.get('PORT');
+  const origin: string[] = _env.get('CORS_ORIGIN');
+
+  // global pipes for validation
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
+
+  // enable cors
+  app.enableCors({
+    origin: origin,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Timezone', 'Authorization'],
+    credentials: true,
+  });
+
+  // swagger
+  const config = new DocumentBuilder()
+    .setTitle('API Documentation')
+    .setDescription('The API description')
+    .setVersion('1.0')
+    .addTag('users')
+    .build();
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api/docs', app, document);
+
+  // start application
+  await app.listen(port, '0.0.0.0', (): void => {
+    app
+      .getUrl()
+      .then((url) => logger.log(`Application is running on: ${url}`))
+      .catch((err) => logger.log(err));
+  });
+}
+
+bootstrap().catch((err) => console.error(err));
